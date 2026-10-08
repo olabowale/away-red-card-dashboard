@@ -189,7 +189,7 @@ away_red_only = st.sidebar.checkbox("Away red card only", value=False)
 
 refresh_seconds = st.sidebar.selectbox(
     "Refresh interval",
-    options=[60, 120],
+    options=[30, 60, 120],
     index=1,
     format_func=lambda x: f"{x} seconds",
 )
