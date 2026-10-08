@@ -1,45 +1,10 @@
 import os
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pandas as pd
 import requests
 import streamlit as st
-
-API_URL = "https://v3.football.api-sports.io"
-DATA_DIR = Path("away_red_card_data")
-DATA_DIR.mkdir(exist_ok=True)
-ALERT_LOG = DATA_DIR / "alerts.csv"
-
-DEFAULT_LEAGUES = {
-    39: "Premier League",
-    140: "La Liga",
-    78: "Bundesliga",
-    135: "Serie A",
-    61: "Ligue 1",
-    94: "Primeira Liga",
-    88: "Eredivisie",
-    144: "Jupiler Pro League",
-    203: "Süper Lig",
-    179: "Scottish Premiership",
-    218: "Austrian Bundesliga",
-    207: "Swiss Super League",
-    119: "Danish Superliga",
-    103: "Eliteserien",
-    113: "Allsvenskan",
-    197: "Super League Greece",
-    106: "Ekstraklasa",
-    345: "Czech First League",
-    283: "Liga I",
-    210: "HNL",
-    286: "Super Liga Serbia",
-    271: "NB I",
-    333: "Premier League Ukraine",
-    172: "First League Bulgaria",
-    357: "Premier Division Ireland",
-    244: "Veikkausliiga",
-}
 
 st.set_page_config(
     page_title="Away Red Card Monitor",
@@ -47,247 +12,303 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🟥 Away Red Card Live Monitor")
-st.caption(
-    "Live football dashboard using API-Football. "
-    "Refresh the page to retrieve the latest live data."
-)
+API_URL = "https://v3.football.api-sports.io/fixtures"
 
-api_key = os.getenv("API_FOOTBALL_KEY", "")
+LEAGUES = {
+    39: "England - Premier League",
+    140: "Spain - La Liga",
+    78: "Germany - Bundesliga",
+    135: "Italy - Serie A",
+    61: "France - Ligue 1",
+    94: "Portugal - Primeira Liga",
+    88: "Netherlands - Eredivisie",
+    144: "Belgium - Jupiler Pro League",
+    203: "Turkey - Süper Lig",
+    179: "Scotland - Premiership",
+    218: "Austria - Bundesliga",
+    207: "Switzerland - Super League",
+    119: "Denmark - Superliga",
+    103: "Norway - Eliteserien",
+    113: "Sweden - Allsvenskan",
+    197: "Greece - Super League",
+    106: "Poland - Ekstraklasa",
+    345: "Czech Republic - First League",
+    283: "Romania - Liga I",
+    210: "Croatia - HNL",
+    286: "Serbia - Super Liga",
+    271: "Hungary - NB I",
+    333: "Ukraine - Premier League",
+    172: "Bulgaria - First League",
+    357: "Ireland - Premier Division",
+    244: "Finland - Veikkausliiga",
+}
 
-if not api_key:
-    st.error(
-        "API_FOOTBALL_KEY is not configured. "
-        "Set it as an environment variable before starting the dashboard."
-    )
-    st.stop()
+CARD_DETAILS = {
+    "red card",
+    "yellow-red card",
+    "second yellow",
+    "second yellow card",
+}
 
-# ---------------- SIDEBAR ----------------
-st.sidebar.header("Filters")
 
-selected_leagues = st.sidebar.multiselect(
-    "Leagues",
-    options=list(DEFAULT_LEAGUES.keys()),
-    default=list(DEFAULT_LEAGUES.keys()),
-    format_func=lambda x: DEFAULT_LEAGUES[x],
-)
+def get_api_key():
+    """Read the API key from Streamlit Secrets, with a local env fallback."""
+    try:
+        key = st.secrets.get("API_FOOTBALL_KEY", "")
+    except Exception:
+        key = ""
+    return str(key or os.getenv("API_FOOTBALL_KEY", "")).strip()
 
-minute_filter = st.sidebar.slider(
-    "Minimum match minute",
-    min_value=0,
-    max_value=90,
-    value=55,
-)
 
-max_total_goals = st.sidebar.slider(
-    "Maximum total goals",
-    min_value=0,
-    max_value=8,
-    value=2,
-)
+API_KEY = get_api_key()
 
-low_score_only = st.sidebar.checkbox(
-    "Only show low-score matches",
-    value=False,
-)
 
-away_red_only = st.sidebar.checkbox(
-    "Only show matches where away team has a red card",
-    value=False,
-)
-
-refresh_seconds = st.sidebar.slider(
-    "Auto-refresh interval (seconds)",
-    min_value=15,
-    max_value=120,
-    value=30,
-)
-
-# ---------------- API ----------------
-@st.cache_data(ttl=15)
+@st.cache_data(ttl=15, show_spinner=False)
 def get_live_fixtures(api_key):
-    response = requests.get(
-        f"{API_URL}/fixtures",
-        params={"live": "all"},
-        headers={"x-apisports-key": api_key},
-        timeout=20,
-    )
-    response.raise_for_status()
-    return response.json().get("response", [])
+    if not api_key:
+        return None, "API-Football key is not configured."
+
+    try:
+        response = requests.get(
+            API_URL,
+            headers={"x-apisports-key": api_key},
+            params={"live": "all"},
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if data.get("errors"):
+            return None, str(data["errors"])
+
+        return data.get("response", []), None
+
+    except requests.RequestException as exc:
+        return None, f"API request failed: {exc}"
+    except ValueError:
+        return None, "API returned invalid JSON."
 
 
-def red_cards_for_team(events, team_id):
-    result = []
+def get_match_minute(fixture):
+    elapsed = fixture.get("fixture", {}).get("status", {}).get("elapsed")
+    return int(elapsed) if isinstance(elapsed, int) else 0
 
-    for event in events:
+
+def get_card_events(fixture):
+    away_id = fixture.get("teams", {}).get("away", {}).get("id")
+    cards = []
+
+    for event in fixture.get("events", []) or []:
         if event.get("type") != "Card":
             continue
 
-        detail = (event.get("detail") or "").lower()
-
-        if detail not in {
-            "red card",
-            "yellow-red card",
-            "second yellow",
-            "second yellow card",
-        }:
+        detail = str(event.get("detail", "")).strip().lower()
+        if detail not in CARD_DETAILS:
             continue
 
-        if event.get("team", {}).get("id") != team_id:
+        if event.get("team", {}).get("id") != away_id:
             continue
 
-        result.append(event)
+        minute = event.get("time", {}).get("elapsed")
+        extra = event.get("time", {}).get("extra")
+        minute_text = str(minute) if minute is not None else "?"
+        if extra:
+            minute_text += f"+{extra}"
 
-    return result
-
-
-def minute_text(event):
-    elapsed = event.get("time", {}).get("elapsed")
-    extra = event.get("time", {}).get("extra")
-
-    if elapsed is None:
-        return "?"
-
-    return f"{elapsed}+{extra}'" if extra else f"{elapsed}'"
-
-
-def process(fixtures):
-    rows = []
-
-    for f in fixtures:
-        league_id = f.get("league", {}).get("id")
-
-        if selected_leagues and league_id not in selected_leagues:
-            continue
-
-        status = f.get("fixture", {}).get("status", {})
-        elapsed = status.get("elapsed") or 0
-
-        home = f.get("teams", {}).get("home", {})
-        away = f.get("teams", {}).get("away", {})
-
-        home_id = home.get("id")
-        away_id = away.get("id")
-
-        home_goals = f.get("goals", {}).get("home") or 0
-        away_goals = f.get("goals", {}).get("away") or 0
-
-        total_goals = home_goals + away_goals
-
-        events = f.get("events", [])
-
-        away_reds = red_cards_for_team(
-            events,
-            away_id
-        )
-
-        if elapsed < minute_filter:
-            continue
-
-        if low_score_only and total_goals > max_total_goals:
-            continue
-
-        if away_red_only and not away_reds:
-            continue
-
-        rows.append({
-            "League": f.get("league", {}).get("name"),
-            "Home": home.get("name"),
-            "Score": f"{home_goals}-{away_goals}",
-            "Away": away.get("name"),
-            "Minute": elapsed,
-            "Away Red": len(away_reds),
-            "Status": status.get("long"),
-            "Fixture ID": f.get("fixture", {}).get("id"),
+        cards.append({
+            "minute": minute_text,
+            "player": event.get("player", {}).get("name") or "Unknown player",
+            "detail": event.get("detail", "Red Card"),
         })
 
-    return pd.DataFrame(rows)
+    return cards
 
 
-try:
-    fixtures = get_live_fixtures(api_key)
-except Exception as exc:
-    st.error(f"Could not retrieve live football data: {exc}")
-    st.stop()
+def fixture_to_row(fixture):
+    fixture_info = fixture.get("fixture", {})
+    teams = fixture.get("teams", {})
+    goals = fixture.get("goals", {})
+    league = fixture.get("league", {})
 
-df = process(fixtures)
+    home = teams.get("home", {})
+    away = teams.get("away", {})
 
-# ---------------- SUMMARY ----------------
-c1, c2, c3, c4 = st.columns(4)
+    home_goals = goals.get("home")
+    away_goals = goals.get("away")
 
-c1.metric("Live matches", len(fixtures))
-c2.metric("Matches shown", len(df))
+    home_score = home_goals if isinstance(home_goals, int) else 0
+    away_score = away_goals if isinstance(away_goals, int) else 0
+    away_cards = get_card_events(fixture)
 
-if not df.empty:
-    c3.metric(
-        "Away-red matches",
-        int((df["Away Red"] > 0).sum()),
-    )
-    c4.metric(
-        "Low-score shown",
-        int(
-            df["Score"].apply(
-                lambda x: sum(map(int, x.split("-")))
-            ).le(max_total_goals).sum()
+    return {
+        "Fixture ID": fixture_info.get("id"),
+        "League": league.get("name", "Unknown"),
+        "League ID": league.get("id"),
+        "Home Team": home.get("name", "Unknown"),
+        "Away Team": away.get("name", "Unknown"),
+        "Score": f"{home_score} - {away_score}",
+        "Minute": get_match_minute(fixture),
+        "Total Goals": home_score + away_score,
+        "Away Red": bool(away_cards),
+        "Away Red Details": "; ".join(
+            f"{c['minute']}' {c['player']} ({c['detail']})"
+            for c in away_cards
         ),
-    )
-else:
-    c3.metric("Away-red matches", 0)
-    c4.metric("Low-score shown", 0)
+        "Away Red Count": len(away_cards),
+        "Status": fixture_info.get("status", {}).get("long", ""),
+    }
 
-st.divider()
 
-if df.empty:
-    st.info("No matches currently meet your selected filters.")
-else:
-    st.dataframe(
-        df.sort_values(
-            ["Away Red", "Minute"],
-            ascending=[False, False]
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
+st.sidebar.title("⚙️ Filters")
 
-# ---------------- ALERT SECTION ----------------
-red_df = df[df["Away Red"] > 0] if not df.empty else pd.DataFrame()
-
-if not red_df.empty:
-    st.subheader("🚨 Away Red Card Matches")
-
-    st.dataframe(
-        red_df,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-# ---------------- ALERT HISTORY ----------------
-st.subheader("📊 Alert History")
-
-if ALERT_LOG.exists():
-    try:
-        alerts = pd.read_csv(ALERT_LOG)
-        if not alerts.empty:
-            st.dataframe(
-                alerts.tail(100).iloc[::-1],
-                use_container_width=True,
-                hide_index=True,
-            )
-        else:
-            st.info("No saved alerts yet.")
-    except Exception as exc:
-        st.warning(f"Could not read alert history: {exc}")
-else:
-    st.info(
-        "No alert history found. Run the Telegram monitor "
-        "to populate the alert CSV."
-    )
-
-st.caption(
-    f"Last dashboard refresh: "
-    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+selected_leagues = st.sidebar.multiselect(
+    "Leagues",
+    options=list(LEAGUES.keys()),
+    default=list(LEAGUES.keys()),
+    format_func=lambda x: LEAGUES[x],
 )
 
-# Simple automatic refresh
+min_minute = st.sidebar.number_input(
+    "Minimum match minute",
+    min_value=0,
+    max_value=130,
+    value=55,
+    step=1,
+)
+
+max_total_goals = st.sidebar.number_input(
+    "Maximum total goals",
+    min_value=0,
+    max_value=15,
+    value=2,
+    step=1,
+)
+
+low_score_only = st.sidebar.checkbox("Low-score matches only", value=False)
+away_red_only = st.sidebar.checkbox("Away red card only", value=False)
+
+refresh_seconds = st.sidebar.selectbox(
+    "Refresh interval",
+    options=[15, 30, 60, 120],
+    index=1,
+    format_func=lambda x: f"{x} seconds",
+)
+
+st.title("🟥 Away Red Card Monitor")
+st.caption(
+    "Live football dashboard using API-Football. "
+    "Highlights matches where the away team has received a red card."
+)
+
+if not API_KEY:
+    st.error("API-Football key is not configured.")
+    st.info("On Streamlit Cloud, open Settings → Secrets and add:")
+    st.code('API_FOOTBALL_KEY = "YOUR_API_FOOTBALL_KEY"', language="toml")
+    st.stop()
+
+with st.spinner("Loading live fixtures..."):
+    fixtures, error = get_live_fixtures(API_KEY)
+
+if error:
+    st.error(error)
+    st.stop()
+
+if not fixtures:
+    st.info("No live fixtures are currently available.")
+    st.stop()
+
+df = pd.DataFrame([fixture_to_row(f) for f in fixtures])
+
+if selected_leagues:
+    df = df[df["League ID"].isin(selected_leagues)]
+
+df = df[df["Minute"] >= min_minute]
+df = df[df["Total Goals"] <= max_total_goals]
+
+if low_score_only:
+    df = df[df["Total Goals"] <= 2]
+
+if away_red_only:
+    df = df[df["Away Red"]]
+
+df = df.sort_values(
+    by=["Away Red", "Minute", "League"],
+    ascending=[False, False, True],
+)
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric("Live matches", len(df))
+
+with col2:
+    st.metric("Away red-card matches", int(df["Away Red"].sum()) if not df.empty else 0)
+
+with col3:
+    st.metric(
+        "Matches ≤ 2 goals",
+        int((df["Total Goals"] <= 2).sum()) if not df.empty else 0,
+    )
+
+with col4:
+    st.metric("Highest match minute", int(df["Minute"].max()) if not df.empty else 0)
+
+st.divider()
+st.subheader("⚽ Live Matches")
+
+if df.empty:
+    st.warning("No matches currently satisfy the selected filters.")
+else:
+    display_df = df[
+        [
+            "League",
+            "Home Team",
+            "Away Team",
+            "Score",
+            "Minute",
+            "Total Goals",
+            "Away Red",
+            "Away Red Count",
+            "Away Red Details",
+            "Status",
+        ]
+    ].copy()
+
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Away Red": st.column_config.CheckboxColumn(
+                "Away Red",
+                help="Whether the away team has received a red card.",
+            ),
+            "Minute": st.column_config.NumberColumn("Min", format="%d"),
+            "Total Goals": st.column_config.NumberColumn("Goals", format="%d"),
+            "Away Red Count": st.column_config.NumberColumn("Away Reds", format="%d"),
+        },
+    )
+
+st.divider()
+st.subheader("🚨 Away Red-Card Alerts")
+
+red_df = df[df["Away Red"]].copy()
+
+if red_df.empty:
+    st.success("No away-team red cards match the current filters.")
+else:
+    for _, row in red_df.iterrows():
+        st.warning(
+            f"**{row['Away Team']}** received a red card against "
+            f"**{row['Home Team']}** — {row['Score']} ({row['Minute']}' min). "
+            f"{row['Away Red Details']}"
+        )
+
+now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+st.caption(
+    f"Last successful API refresh: {now} · "
+    f"Next refresh target: {refresh_seconds}s"
+)
+
 time.sleep(refresh_seconds)
 st.rerun()
