@@ -9,9 +9,10 @@ import streamlit as st
 # ============================================================
 # Away Red Card Monitor — Deployment Ready
 # ============================================================
-# API key:
-#   Streamlit Cloud -> Settings -> Secrets
+# Streamlit Cloud -> App Settings -> Secrets:
 #   API_FOOTBALL_KEY = "YOUR_API_FOOTBALL_KEY"
+#   TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+#   TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
 #
 # The dashboard uses API-Football's live fixture feed and filters
 # the returned fixtures by competition name. This avoids relying
@@ -296,17 +297,46 @@ def names_for_selection(selected):
 # ------------------------------------------------------------
 # Secure API key
 # ------------------------------------------------------------
-def get_api_key():
+def get_secret(name):
+    """Read a secret from Streamlit secrets, then environment variables."""
     try:
-        key = st.secrets.get("API_FOOTBALL_KEY", "")
+        value = st.secrets.get(name, "")
     except Exception:
-        key = ""
-    if not key:
-        key = os.getenv("API_FOOTBALL_KEY", "")
-    return str(key).strip()
+        value = ""
+    if not value:
+        value = os.getenv(name, "")
+    return str(value).strip()
+
+
+def get_api_key():
+    return get_secret("API_FOOTBALL_KEY")
+
+
+def send_telegram_message(bot_token, chat_id, message):
+    """Send one message through the official Telegram Bot API."""
+    if not bot_token or not chat_id:
+        return False, "Telegram bot token or chat ID is missing."
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    try:
+        response = requests.post(
+            url,
+            json={"chat_id": chat_id, "text": message, "disable_web_page_preview": True},
+            timeout=12,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("ok"):
+            return False, str(payload.get("description", "Telegram rejected the message."))
+        return True, "Telegram message sent."
+    except requests.RequestException as exc:
+        return False, f"Telegram request failed: {exc}"
+    except ValueError:
+        return False, "Telegram returned an invalid response."
 
 
 API_KEY = get_api_key()
+TELEGRAM_BOT_TOKEN = get_secret("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = get_secret("TELEGRAM_CHAT_ID")
 
 
 # ------------------------------------------------------------
@@ -492,7 +522,7 @@ min_minute = st.sidebar.number_input(
     "Minimum match minute",
     min_value=0,
     max_value=130,
-    value=10,
+    value=55,
     step=1,
 )
 
@@ -500,13 +530,13 @@ max_total_goals = st.sidebar.number_input(
     "Maximum total goals",
     min_value=0,
     max_value=15,
-    value=3,
+    value=2,
     step=1,
 )
 
 low_score_only = st.sidebar.checkbox(
     "Low-score matches only",
-    value=True,
+    value=False,
 )
 
 away_red_only = st.sidebar.checkbox(
@@ -516,10 +546,32 @@ away_red_only = st.sidebar.checkbox(
 
 refresh_seconds = st.sidebar.selectbox(
     "Refresh interval",
-    options=[30, 60, 120],
+    options=[15, 30, 60, 120],
     index=1,
     format_func=lambda x: f"{x} seconds",
 )
+
+st.sidebar.divider()
+st.sidebar.subheader("📲 Telegram alerts")
+telegram_ready = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+telegram_alerts_enabled = st.sidebar.checkbox(
+    "Send away-red-card alerts to Telegram",
+    value=telegram_ready,
+    disabled=not telegram_ready,
+    help="Sends a message for an away-team red card in the selected competitions. Display-only minute and goal filters do not suppress Telegram alerts.",
+)
+if not telegram_ready:
+    st.sidebar.caption("Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Streamlit Secrets to enable alerts.")
+elif st.sidebar.button("Send test Telegram message", use_container_width=True):
+    ok, message = send_telegram_message(
+        TELEGRAM_BOT_TOKEN,
+        TELEGRAM_CHAT_ID,
+        "✅ Away Red Card Monitor: Telegram connection test successful. Alerts are configured.",
+    )
+    if ok:
+        st.sidebar.success(message)
+    else:
+        st.sidebar.error(message)
 
 # ------------------------------------------------------------
 # Main page
@@ -562,6 +614,10 @@ allowed_names = names_for_selection(specific_competitions)
 df["_league_normalized"] = df["League"].map(normalize_name)
 df = df[df["_league_normalized"].isin(allowed_names)]
 
+# Telegram notifications monitor selected competitions independently of the
+# visual minute/goal filters, so those display filters do not hide red cards.
+telegram_candidates_df = df.copy()
+
 df = df[df["Minute"] >= min_minute]
 df = df[df["Total Goals"] <= max_total_goals]
 
@@ -592,7 +648,7 @@ with col2:
 
 with col3:
     st.metric(
-        "Matches ≤ 5 goals",
+        "Matches ≤ 2 goals",
         int((df["Total Goals"] <= 2).sum()) if not df.empty else 0,
     )
 
@@ -645,6 +701,37 @@ st.divider()
 st.subheader("🚨 Away Red-Card Alerts")
 
 red_df = df[df["Away Red"]].copy()
+
+# Notify once per distinct away-red-card event during this Streamlit session.
+# The key includes the fixture ID and card details, so a second red card in the
+# same match can trigger a separate message.
+if "telegram_sent_alert_keys" not in st.session_state:
+    st.session_state["telegram_sent_alert_keys"] = set()
+
+telegram_red_df = telegram_candidates_df[telegram_candidates_df["Away Red"]].copy()
+if telegram_alerts_enabled and telegram_ready and not telegram_red_df.empty:
+    for _, row in telegram_red_df.iterrows():
+        alert_key = f"{row['Fixture ID']}|{row['Away Red Details']}"
+        if alert_key in st.session_state["telegram_sent_alert_keys"]:
+            continue
+
+        message = (
+            "🟥 AWAY TEAM RED CARD\n\n"
+            f"Competition: {row['League']} ({row['League Country']})\n"
+            f"Match: {row['Home Team']} vs {row['Away Team']}\n"
+            f"Score: {row['Score']}\n"
+            f"Minute: {row['Minute']}'\n"
+            f"Card details: {row['Away Red Details']}\n"
+            f"Total goals: {row['Total Goals']}\n\n"
+            "Sent by Away Red Card Monitor"
+        )
+        ok, send_error = send_telegram_message(
+            TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, message
+        )
+        if ok:
+            st.session_state["telegram_sent_alert_keys"].add(alert_key)
+        else:
+            st.warning(f"Telegram alert could not be sent: {send_error}")
 
 if red_df.empty:
     st.success("No away-team red cards match the current filters.")
