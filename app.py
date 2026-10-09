@@ -381,7 +381,7 @@ min_minute = st.sidebar.number_input(
     "Minimum match minute",
     min_value=0,
     max_value=130,
-    value=55,
+    value=15,
     step=1,
 )
 
@@ -405,7 +405,7 @@ away_red_only = st.sidebar.checkbox(
 
 refresh_seconds = st.sidebar.selectbox(
     "Refresh interval",
-    options=[15, 30, 60, 120],
+    options=[30, 60, 120],
     index=1,
     format_func=lambda x: f"{x} seconds",
 )
