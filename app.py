@@ -155,6 +155,90 @@ INTERNATIONAL = {
     ],
 }
 
+
+# Women's competitions are separate selectable groups so users can monitor
+# women's football without mixing it into the men's competition list.
+WOMENS_DOMESTIC = {
+    "Europe — Women's Domestic Leagues": [
+        "Women’s Super League", "Women's Super League", "WSL",
+        "Women's Championship", "Frauen Bundesliga", "Frauenliga",
+        "Primera División Femenina", "Primera Division Femenina",
+        "Feminine Division 1", "Serie A Women", "Serie A Femminile",
+        "Eredivisie Women", "Liga BPI", "Campeonato Nacional Feminino",
+        "Scottish Women's Premier League", "Damallsvenskan", "Toppserien",
+        "Kvindeliga", "Kansallinen Liiga", "AXA Women's Super League",
+        "Ekstraliga Women", "Liga 1 Feminin", "Premiership Women",
+        "B-Liga Women",
+    ],
+    "Africa — Women's Domestic Leagues": [
+        "Super League Women", "NWFL Premiership", "Nigeria Women Football League",
+    ],
+    "Asia — Women's Domestic Leagues": [
+        "WK-League", "Women's Super League", "Japan Women's WE League",
+        "A-League Women",
+    ],
+    "Americas — Women's Domestic Leagues": [
+        "NWSL", "Liga MX Femenil", "Brasileiro Women", "National Women's Soccer League",
+    ],
+    "Oceania — Women's Domestic Leagues": [
+        "A-League Women", "New Zealand Women's National League",
+    ],
+}
+
+WOMENS_CONTINENTAL_CLUB = {
+    "Europe — Women's Continental Clubs": [
+        "UEFA Champions League Women", "UEFA Europa Cup - Women",
+    ],
+    "Africa — Women's Continental Clubs": [
+        "CAF Women's Champions League",
+    ],
+    "Asia — Women's Continental Clubs": [
+        "AFC Women's Champions League",
+    ],
+    "Americas — Women's Continental Clubs": [
+        "CONCACAF W Champions Cup", "CONMEBOL Libertadores Femenina",
+    ],
+    "World — Women's Club Competitions": [
+        "FIFA Women Champions Cup", "International Champions Cup - Women",
+    ],
+}
+
+WOMENS_INTERNATIONAL = {
+    "Europe — Women's National Teams": [
+        "UEFA Championship - Women", "UEFA Championship - Women - Qualification",
+        "UEFA Nations League - Women", "UEFA U17 Championship - Women",
+        "UEFA U19 Championship - Women",
+    ],
+    "Africa — Women's National Teams": [
+        "Africa Cup of Nations - Women", "African Nations Championship - Women",
+        "All Africa Games Women",
+    ],
+    "Asia — Women's National Teams": [
+        "Asian Cup Women", "Asian Cup Women - Qualification",
+        "Asian Games Women", "AFC U17 Asian Cup - Women",
+        "AFC U20 Asian Cup - Women", "Asean Championship Women",
+        "EAFF E-1 Football Championship - Women",
+    ],
+    "Americas — Women's National Teams": [
+        "Copa America Femenina", "CONCACAF Gold Cup - Women",
+        "CONCACAF Gold Cup - Qualification - Women",
+        "CONCACAF Nations League - Women", "CONCACAF Women U17",
+        "CONCACAF Women U20", "CONMEBOL Nations League Women",
+        "CONMEBOL U20 Femenino", "CONMEBOL - U17 Femenino",
+        "SheBelieves Cup",
+    ],
+    "Oceania — Women's National Teams": [
+        "OFC Women's Nations Cup", "OFC U19 Championship - Women",
+    ],
+    "World — Women's National Teams": [
+        "World Cup - Women", "World Cup - Women - Qualification Concacaf",
+        "World Cup - Women - Qualification Europe", "World Cup - U20 - Women",
+        "World Cup - U17 - Women", "Olympics Women",
+        "Olympics Women - Qualification Asia", "Olympics Women - Qualification CAF",
+        "Friendlies Women", "Olympics Women - Qualification",
+    ],
+}
+
 # API-Football can use slightly different spellings for some domestic
 # competitions. Aliases let the dashboard match those names.
 ALIASES = {
@@ -186,6 +270,15 @@ ALIASES = {
     "Copa America": {"Copa America"},
     "CONCACAF Gold Cup": {"CONCACAF Gold Cup", "Gold Cup"},
     "World Cup": {"World Cup"},
+    "Women’s Super League": {"Women’s Super League", "Women's Super League", "WSL"},
+    "Women's Championship": {"Women's Championship", "Women Championship"},
+    "UEFA Champions League Women": {"UEFA Champions League Women", "UEFA Women's Champions League"},
+    "AFC Women's Champions League": {"AFC Women's Champions League", "AFC Women Champions League"},
+    "CAF Women's Champions League": {"CAF Women's Champions League", "CAF Women Champions League"},
+    "CONCACAF W Champions Cup": {"CONCACAF W Champions Cup", "CONCACAF Women's Champions Cup"},
+    "CONMEBOL Libertadores Femenina": {"CONMEBOL Libertadores Femenina", "Copa Libertadores Femenina"},
+    "World Cup - Women": {"World Cup - Women", "Women's World Cup", "FIFA Women's World Cup"},
+    "Copa America Femenina": {"Copa America Femenina", "Copa América Femenina"},
 }
 
 
@@ -338,6 +431,9 @@ competition_groups = st.sidebar.multiselect(
         "African continental clubs",
         "Asian continental clubs",
         "International national teams",
+        "Women's domestic leagues",
+        "Women's continental club competitions",
+        "Women's international national teams",
     ],
     default=[
         "Domestic leagues",
@@ -345,6 +441,9 @@ competition_groups = st.sidebar.multiselect(
         "African continental clubs",
         "Asian continental clubs",
         "International national teams",
+        "Women's domestic leagues",
+        "Women's continental club competitions",
+        "Women's international national teams",
     ],
 )
 
@@ -366,6 +465,18 @@ if "International national teams" in competition_groups:
     for competitions in INTERNATIONAL.values():
         selected_competitions.extend(competitions)
 
+if "Women's domestic leagues" in competition_groups:
+    for competitions in WOMENS_DOMESTIC.values():
+        selected_competitions.extend(competitions)
+
+if "Women's continental club competitions" in competition_groups:
+    for competitions in WOMENS_CONTINENTAL_CLUB.values():
+        selected_competitions.extend(competitions)
+
+if "Women's international national teams" in competition_groups:
+    for competitions in WOMENS_INTERNATIONAL.values():
+        selected_competitions.extend(competitions)
+
 selected_competitions = list(dict.fromkeys(selected_competitions))
 
 specific_competitions = st.sidebar.multiselect(
@@ -381,7 +492,7 @@ min_minute = st.sidebar.number_input(
     "Minimum match minute",
     min_value=0,
     max_value=130,
-    value=10,
+    value=55,
     step=1,
 )
 
@@ -389,7 +500,7 @@ max_total_goals = st.sidebar.number_input(
     "Maximum total goals",
     min_value=0,
     max_value=15,
-    value=3,
+    value=2,
     step=1,
 )
 
@@ -405,7 +516,7 @@ away_red_only = st.sidebar.checkbox(
 
 refresh_seconds = st.sidebar.selectbox(
     "Refresh interval",
-    options=[30, 60, 120],
+    options=[15, 30, 60, 120],
     index=1,
     format_func=lambda x: f"{x} seconds",
 )
@@ -416,8 +527,8 @@ refresh_seconds = st.sidebar.selectbox(
 st.title("🟥 Away Red Card Monitor")
 st.caption(
     "Live football dashboard using API-Football. "
-    "Now covering domestic leagues plus European, African and Asian "
-    "continental club competitions and international national-team competitions."
+    "Includes men's and women's domestic leagues, continental club competitions, "
+    "and international national-team tournaments. Availability depends on API-Football coverage."
 )
 
 if not API_KEY:
