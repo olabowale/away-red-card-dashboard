@@ -592,7 +592,7 @@ with col2:
 
 with col3:
     st.metric(
-        "Matches ≤ 2 goals",
+        "Matches ≤ 5 goals",
         int((df["Total Goals"] <= 2).sum()) if not df.empty else 0,
     )
 
