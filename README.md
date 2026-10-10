@@ -1,6 +1,6 @@
 # Away Red Card Monitor — Men's and Women's Football + Telegram Alerts
 
-A Streamlit dashboard that monitors API-Football live fixtures and filters competitions by name. It includes selected men's and women's domestic leagues, continental club competitions, and international tournaments. Competition coverage depends on the API-Football plan and season.
+A Streamlit dashboard that monitors API-Football live fixtures and filters competitions by name. It includes selected men's and women's domestic leagues, second-division competitions for both, continental club competitions, and international tournaments. It also adds Japan and South Korea domestic leagues and Australian national/state competitions for men and women. Competition coverage depends on the API-Football plan, season, and provider fixture/event data.
 
 ## Files
 - `app.py` — dashboard
@@ -46,6 +46,17 @@ Save the secrets. Do not put tokens in `app.py` or commit them to GitHub.
 5. When a red card is detected for the away team in one of the selected competitions, the dashboard sends a Telegram alert containing the competition, teams, score, minute, and card details. The sidebar's minimum-minute and maximum-goal filters affect the table, but do not suppress Telegram notifications.
 
 The app suppresses duplicate alerts for the same card during the current Streamlit session. If the app/session restarts, an alert already seen may be sent again; durable cross-restart deduplication requires a persistent database.
+
+## Expanded domestic coverage
+
+The competition filter now includes:
+- Men's second-division competitions across selected European, African, Asian, American and Oceanian countries.
+- Women's second-tier competitions where the provider has identifiable competition names.
+- Japan: J1, J2, J2/J3, J3, Japan Football League, WE League and selected Nadeshiko competitions.
+- South Korea: K League 1, K League 2, K3 League, K4 League and WK-League.
+- Australia: A-League, A-League Women, Australian Championship and selected state/regional NPL, NPL 2, state-league and women's league names.
+
+Some regional or women's competition names may not be returned by API-Football in every season. Selecting a name does not create coverage if the provider does not return live fixtures for it. The dashboard monitors only live fixtures returned by the configured API plan.
 
 ## Important monitoring limitations
 

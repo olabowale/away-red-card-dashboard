@@ -157,6 +157,70 @@ INTERNATIONAL = {
 }
 
 
+# Additional domestic competitions requested: men's second tiers, women's
+# second tiers, Japan/South Korea, and Australia-wide/state-level leagues.
+MENS_SECOND_DIVISION = {
+    "Men — Second-division domestic leagues": [
+        # Europe
+        "2. Liga", "Challenger Pro League", "Championship", "League One",
+        "League Two", "Eerste Divisie", "2. Bundesliga", "3. Liga",
+        "Serie B", "Serie C - Girone A", "Serie C - Girone B", "Serie C - Girone C",
+        "Ligue 2", "Ligue 3", "LaLiga 2", "Segunda División", "Liga Portugal 2",
+        "Super League 2", "Prva Liga", "NB II", "FNL", "I Liga", "Liga II",
+        "Persha Liga", "1. Division", "Ykkösliiga", "Ykkönen", "Erovnuli Liga 2",
+        "2a Divisió", "First League", "Second League", "Division 1", "Division 2",
+        # Africa and Middle East
+        "Ligue 2 - Group A", "Ligue 2 - Group B", "Second League",
+        "Second League - Group B", "Second League - Group C", "1st Division",
+        "Super League", "Division 1", "Second Division",
+        # Asia
+        "J2 League", "J2/J3 League", "J3 League", "K League 2", "K3 League", "K4 League",
+        "China League One", "League One", "League Two", "I-League", "I-League - 2nd Division",
+        "Liga 2", "Thai League 2", "V.League 2", "Second Division", "Division 1",
+        # Americas and Oceania
+        "USL Championship", "USL League One", "USL League Two", "Primera Nacional",
+        "Primera B", "Primera B Metropolitana", "Primera C", "Australian Championship",
+    ],
+}
+
+WOMENS_SECOND_DIVISION = {
+    "Women — Second-division domestic leagues": [
+        "Women's Championship", "Women’s Championship", "2. Frauen-Bundesliga",
+        "2. Frauen Bundesliga", "Feminine Division 2", "Division 2 Féminine",
+        "Serie B Women", "Serie B Femminile", "Primera Federación Femenina",
+        "Segunda Federación Femenina", "Women's National League", "Women's Premier League",
+        "Women's Super League 2", "USL W League", "WPSL",
+    ],
+}
+
+JAPAN_KOREA_DOMESTIC = {
+    "Japan & South Korea — Domestic leagues (men and women)": [
+        "J1 League", "J2 League", "J2/J3 League", "J3 League", "Japan Football League",
+        "WE League", "Nadeshiko League", "Nadeshiko League 2",
+        "K League 1", "K League 2", "K3 League", "K4 League", "WK-League",
+    ],
+}
+
+AUSTRALIA_DOMESTIC = {
+    "Australia — Domestic leagues (men and women)": [
+        # National men's competitions
+        "A-League", "Australian Championship", "Australia Cup",
+        # State/regional men's competitions
+        "Brisbane Premier League", "Capital Territory NPL", "Capital Territory NPL 2",
+        "NNSW League 1", "New South Wales NPL", "New South Wales NPL 2",
+        "Northern NSW NPL", "Northern Territory Premier League", "Npl Nsw U20",
+        "Queensland NPL", "Queensland Premier League", "South Australia NPL",
+        "South Australia State League 1", "Victoria NPL", "Victoria Premier League",
+        "Western Australia NPL", "Tasmania NPL",
+        # Women's competitions (coverage varies by state and season)
+        "A-League Women", "NPL NSW Women", "New South Wales NPL Women",
+        "Queensland NPL Women", "Victoria NPL Women", "South Australia NPL Women",
+        "Western Australia NPL Women", "Capital Territory NPL Women",
+        "Tasmania NPL Women", "Northern NSW NPL Women", "Brisbane Women's Premier League",
+    ],
+}
+
+
 # Women's competitions are separate selectable groups so users can monitor
 # women's football without mixing it into the men's competition list.
 WOMENS_DOMESTIC = {
@@ -457,6 +521,10 @@ competition_groups = st.sidebar.multiselect(
     "Select competition groups",
     options=[
         "Domestic leagues",
+        "Men's second-division domestic leagues",
+        "Women's second-division domestic leagues",
+        "Japan and South Korea domestic leagues",
+        "Australia domestic leagues",
         "European continental clubs",
         "African continental clubs",
         "Asian continental clubs",
@@ -467,6 +535,10 @@ competition_groups = st.sidebar.multiselect(
     ],
     default=[
         "Domestic leagues",
+        "Men's second-division domestic leagues",
+        "Women's second-division domestic leagues",
+        "Japan and South Korea domestic leagues",
+        "Australia domestic leagues",
         "European continental clubs",
         "African continental clubs",
         "Asian continental clubs",
@@ -478,6 +550,22 @@ competition_groups = st.sidebar.multiselect(
 )
 
 selected_competitions = []
+
+if "Men's second-division domestic leagues" in competition_groups:
+    for competitions in MENS_SECOND_DIVISION.values():
+        selected_competitions.extend(competitions)
+
+if "Women's second-division domestic leagues" in competition_groups:
+    for competitions in WOMENS_SECOND_DIVISION.values():
+        selected_competitions.extend(competitions)
+
+if "Japan and South Korea domestic leagues" in competition_groups:
+    for competitions in JAPAN_KOREA_DOMESTIC.values():
+        selected_competitions.extend(competitions)
+
+if "Australia domestic leagues" in competition_groups:
+    for competitions in AUSTRALIA_DOMESTIC.values():
+        selected_competitions.extend(competitions)
 
 if "Domestic leagues" in competition_groups:
     selected_competitions.extend(DOMESTIC["Europe — Domestic Leagues"])
@@ -522,7 +610,7 @@ min_minute = st.sidebar.number_input(
     "Minimum match minute",
     min_value=0,
     max_value=130,
-    value=10,
+    value=55,
     step=1,
 )
 
@@ -530,7 +618,7 @@ max_total_goals = st.sidebar.number_input(
     "Maximum total goals",
     min_value=0,
     max_value=15,
-    value=4,
+    value=2,
     step=1,
 )
 
@@ -546,7 +634,7 @@ away_red_only = st.sidebar.checkbox(
 
 refresh_seconds = st.sidebar.selectbox(
     "Refresh interval",
-    options=[30, 60, 120],
+    options=[15, 30, 60, 120],
     index=1,
     format_func=lambda x: f"{x} seconds",
 )
@@ -579,8 +667,9 @@ elif st.sidebar.button("Send test Telegram message", use_container_width=True):
 st.title("🟥 Away Red Card Monitor")
 st.caption(
     "Live football dashboard using API-Football. "
-    "Includes men's and women's domestic leagues, continental club competitions, "
-    "and international national-team tournaments. Availability depends on API-Football coverage."
+    "Includes men's and women's domestic leagues, selected second divisions, Japan and South Korea, "
+    "Australian national/state competitions, continental clubs and international tournaments. "
+    "Availability depends on API-Football coverage and season."
 )
 
 if not API_KEY:
@@ -648,8 +737,8 @@ with col2:
 
 with col3:
     st.metric(
-        "Matches ≤ 5 goals",
-        int((df["Total Goals"] <= 5).sum()) if not df.empty else 0,
+        "Matches ≤ 2 goals",
+        int((df["Total Goals"] <= 2).sum()) if not df.empty else 0,
     )
 
 with col4:
