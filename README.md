@@ -1,6 +1,6 @@
 # Away Red Card Monitor — Men's and Women's Football + Telegram Alerts
 
-A Streamlit dashboard that monitors API-Football live fixtures and filters competitions by name. It includes selected men's and women's domestic leagues, second-division competitions for both, continental club competitions, and international tournaments. It also adds Japan and South Korea domestic leagues and Australian national/state competitions for men and women. Optional odds and ranking enrichment can display available pre-match odds, live odds, domestic league table positions, and FIFA men’s/women’s national-team ranks. Competition and data coverage depends on the provider, season, and API plan.
+A Streamlit dashboard that monitors API-Football live fixtures and filters competitions by name. It includes selected men's and women's domestic leagues, second-division competitions for both, continental club competitions, and international tournaments. It also adds Japan and South Korea domestic leagues and Australian national/state competitions for men and women. Competition coverage depends on the API-Football plan, season, and provider fixture/event data.
 
 ## Files
 - `app.py` — dashboard
@@ -46,18 +46,6 @@ Save the secrets. Do not put tokens in `app.py` or commit them to GitHub.
 5. When a red card is detected for the away team in one of the selected competitions, the dashboard sends a Telegram alert containing the competition, teams, score, minute, and card details. The sidebar's minimum-minute and maximum-goal filters affect the table, but do not suppress Telegram notifications.
 
 The app suppresses duplicate alerts for the same card during the current Streamlit session. If the app/session restarts, an alert already seen may be sent again; durable cross-restart deduplication requires a persistent database.
-
-
-## 5. Optional odds and rankings
-
-Use the **Odds and rankings** controls in the sidebar:
-
-- **Load starting/pre-match and live odds** loads the available pre-match odds snapshot for up to 15 displayed matches and calls the live-odds feed once. Results may be missing for some competitions or bookmakers. The pre-match endpoint does **not** guarantee the first-ever opening price; to capture true opening odds, a separate process must record prices before kick-off and save them to persistent storage.
-- **Load domestic table ranks and national-team FIFA ranks** fetches the current competition standings for the league/season when supported, and tries to retrieve FIFA rankings for national-team fixtures. Standings are cached for one hour and FIFA ranking lookups for one day.
-- These options are off by default to help conserve API request quota. Enable them when needed.
-- Domestic ranks may be unavailable for cups, friendlies, some lower divisions, or competitions without standings coverage. FIFA rankings may be unavailable for country-name variants or if FIFA's public endpoint changes. Missing values display as `—` or `Not supplied`; they are not estimated.
-
-API-Football documents `/odds` for pre-match odds, `/odds/live` for in-play odds, and `/standings` for competition tables. Odds coverage and retention vary; do not treat the available pre-match snapshot as guaranteed opening odds.
 
 ## Expanded domestic coverage
 
