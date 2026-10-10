@@ -610,7 +610,7 @@ min_minute = st.sidebar.number_input(
     "Minimum match minute",
     min_value=0,
     max_value=130,
-    value=55,
+    value=10,
     step=1,
 )
 
@@ -618,7 +618,7 @@ max_total_goals = st.sidebar.number_input(
     "Maximum total goals",
     min_value=0,
     max_value=15,
-    value=2,
+    value=4,
     step=1,
 )
 
@@ -737,8 +737,8 @@ with col2:
 
 with col3:
     st.metric(
-        "Matches ≤ 2 goals",
-        int((df["Total Goals"] <= 2).sum()) if not df.empty else 0,
+        "Matches ≤ 5 goals",
+        int((df["Total Goals"] <= 5).sum()) if not df.empty else 0,
     )
 
 with col4:
