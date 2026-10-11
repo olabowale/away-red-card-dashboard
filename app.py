@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 import streamlit as st
+import pycountry
 
 # ============================================================
 # Away Red Card Monitor — Deployment Ready
@@ -25,7 +26,9 @@ st.set_page_config(
     layout="wide",
 )
 
-API_URL = "https://v3.football.api-sports.io/fixtures"
+API_ROOT = "https://v3.football.api-sports.io"
+API_URL = f"{API_ROOT}/fixtures"
+FIFA_API_ROOT = "https://api.fifa.com/api/v3/rankings/byCountry"
 
 # ------------------------------------------------------------
 # Competition catalogue
@@ -432,46 +435,289 @@ def get_live_fixtures(api_key):
         return None, "API returned invalid JSON."
 
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_standings(api_key, league_id, season):
+    """Return team ID -> current competition-table rank, if supported."""
+    if not api_key or not league_id or not season:
+        return {}
+    try:
+        response = requests.get(
+            f"{API_ROOT}/standings",
+            headers={"x-apisports-key": api_key},
+            params={"league": int(league_id), "season": int(season)},
+            timeout=18,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("errors") or not payload.get("response"):
+            return {}
+        result = {}
+        for league_obj in payload.get("response", []):
+            groups = league_obj.get("league", {}).get("standings", []) or []
+            for group in groups:
+                for entry in group or []:
+                    team_id = (entry.get("team") or {}).get("id")
+                    rank = entry.get("rank")
+                    if team_id is not None and rank is not None:
+                        result[int(team_id)] = int(rank)
+        return result
+    except (requests.RequestException, ValueError, TypeError):
+        return {}
+
+
+def _extract_match_winner_odds(payload):
+    """Extract a bookmaker's Home/Draw/Away odds from common API-Football shapes."""
+    if not isinstance(payload, dict) or payload.get("errors"):
+        return None
+    for item in payload.get("response", []) or []:
+        bookmakers = item.get("bookmakers") or item.get("odds") or []
+        for bookmaker in bookmakers:
+            bets = bookmaker.get("bets") or []
+            for bet in bets:
+                bet_name = normalize_name(bet.get("name", ""))
+                if bet_name not in {"match winner", "1x2", "fulltime result", "winner"}:
+                    continue
+                values = {}
+                for value in bet.get("values", []) or []:
+                    label = normalize_name(value.get("value", ""))
+                    odd = value.get("odd")
+                    if label in {"home", "1"}:
+                        values["Home"] = odd
+                    elif label in {"draw", "x"}:
+                        values["Draw"] = odd
+                    elif label in {"away", "2"}:
+                        values["Away"] = odd
+                if values:
+                    book_name = bookmaker.get("name", "Bookmaker")
+                    formatted = " | ".join(f"{key}: {values.get(key, '—')}" for key in ("Home", "Draw", "Away"))
+                    return f"{book_name}: {formatted}"
+    return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_prematch_odds(api_key, fixture_id):
+    """Fetch available pre-match odds for a fixture (not guaranteed to be true opening prices)."""
+    if not api_key or not fixture_id:
+        return "Unavailable"
+    try:
+        response = requests.get(
+            f"{API_ROOT}/odds",
+            headers={"x-apisports-key": api_key},
+            params={"fixture": int(fixture_id)},
+            timeout=18,
+        )
+        response.raise_for_status()
+        value = _extract_match_winner_odds(response.json())
+        return value or "Not supplied"
+    except (requests.RequestException, ValueError, TypeError):
+        return "Unavailable"
+
+
+@st.cache_data(ttl=45, show_spinner=False)
+def get_all_live_odds(api_key):
+    """Fetch the live-odds feed once and index it by fixture ID."""
+    if not api_key:
+        return {}
+    try:
+        response = requests.get(
+            f"{API_ROOT}/odds/live",
+            headers={"x-apisports-key": api_key},
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("errors"):
+            return {}
+        indexed = {}
+        for item in payload.get("response", []) or []:
+            fixture_id = (item.get("fixture") or {}).get("id")
+            if fixture_id is None:
+                fixture_id = item.get("fixture_id")
+            if fixture_id is None:
+                continue
+            value = _extract_match_winner_odds({"response": [item]})
+            if value:
+                indexed[int(fixture_id)] = value
+        return indexed
+    except (requests.RequestException, ValueError, TypeError):
+        return {}
+
+
+COUNTRY_ALIASES = {
+    "korea republic": "KOR", "south korea": "KOR", "north korea": "PRK",
+    "iran": "IRN", "ir iran": "IRN", "ivory coast": "CIV", "cote d'ivoire": "CIV",
+    "cape verde": "CPV", "cabo verde": "CPV", "turkiye": "TUR", "turkey": "TUR",
+    "usa": "USA", "united states": "USA", "united states of america": "USA",
+    "england": "ENG", "scotland": "SCO", "wales": "WAL", "northern ireland": "NIR",
+    "hong kong": "HKG", "chinese taipei": "TPE", "bolivia": "BOL",
+    "venezuela": "VEN", "tanzania": "TZA", "dr congo": "COD", "congo dr": "COD",
+    "congo": "CGO", "russia": "RUS", "kosovo": "KVX", "palestine": "PLE",
+    "moldova": "MDA", "laos": "LAO", "syria": "SYR", "brunei": "BRU",
+    "vietnam": "VIE", "china": "CHN", "chinese pr": "CHN", "macau": "MAC",
+    "curacao": "CUW", "aruba": "ARU", "kosovo": "KVX", "faroe islands": "FRO",
+}
+
+
+def country_iso3(country_name):
+    name = normalize_name(country_name)
+    if name in COUNTRY_ALIASES:
+        return COUNTRY_ALIASES[name]
+    try:
+        return pycountry.countries.lookup(str(country_name)).alpha_3
+    except (LookupError, AttributeError):
+        return None
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_fifa_ranking(country_name, gender):
+    """Query FIFA's country ranking endpoint. gender is 'men' or 'women'."""
+    iso3 = country_iso3(country_name)
+    if not iso3:
+        return "—"
+    gender_id = 1 if gender == "men" else 2
+    try:
+        response = requests.get(
+            f"{FIFA_API_ROOT}/{iso3}",
+            params={"gender": gender_id, "language": "en"},
+            headers={"User-Agent": "Mozilla/5.0 AwayRedCardMonitor/1.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        results = payload.get("Results") or payload.get("results") or []
+        if not results:
+            return "—"
+        item = results[0]
+        rank = item.get("Rank", item.get("rank"))
+        points = item.get("DecimalTotalPoints", item.get("Points", item.get("points")))
+        pub_date = item.get("PubDate", item.get("Date", item.get("date", "")))
+        if rank is None:
+            return "—"
+        out = f"#{rank}"
+        if points is not None:
+            out += f" ({points} pts)"
+        if pub_date:
+            out += f" · {str(pub_date)[:10]}"
+        return out
+    except (requests.RequestException, ValueError, TypeError):
+        return "—"
+
 def get_match_minute(fixture):
     elapsed = fixture.get("fixture", {}).get("status", {}).get("elapsed")
     return int(elapsed) if isinstance(elapsed, int) else 0
 
 
-RED_CARD_DETAILS = {
-    "red card",
-    "yellow-red card",
-    "second yellow",
-    "second yellow card",
-}
+def classify_card_event(event):
+    """Classify dismissals while excluding ordinary single yellow cards.
+
+    API providers may label a dismissal as 'Second Yellow Card', 'Yellow-Red
+    Card', '2nd Yellow', or a variant of 'Red Card'. This normalizes common
+    wording variants without treating a normal 'Yellow Card' as a dismissal.
+    """
+    if normalize_name(event.get("type", "")) != "card":
+        return None
+
+    raw_detail = str(event.get("detail", "") or "").strip()
+    detail = normalize_name(raw_detail).replace("-", " ").replace("_", " ")
+    compact = " ".join(detail.split())
+
+    second_yellow_markers = (
+        "second yellow",
+        "2nd yellow",
+        "yellow red",
+        "yellow-red",
+        "second booking",
+        "two yellow cards",
+    )
+    if any(marker in compact for marker in second_yellow_markers):
+        return "Second yellow (dismissal)"
+
+    if compact in {"red card", "red", "straight red card", "direct red card"}:
+        return "Direct red card"
+
+    # Some feeds may append context to a direct-red detail.
+    if "red card" in compact and "yellow" not in compact:
+        return "Direct red card"
+
+    return None
 
 
 def get_away_red_cards(fixture):
+    """Return away-team dismissals, inferring a second yellow if needed.
+
+    Prefer explicit provider dismissal labels. If the feed instead reports both
+    bookings as ordinary yellow cards, infer a dismissal from the player's
+    second yellow event in the same fixture.
+    """
     away_id = fixture.get("teams", {}).get("away", {}).get("id")
     results = []
+    yellow_counts = {}
+    events = list(fixture.get("events", []) or [])
 
-    for event in fixture.get("events", []) or []:
-        if event.get("type") != "Card":
+    def event_order(event):
+        timing = event.get("time", {}) or {}
+        elapsed = timing.get("elapsed")
+        extra = timing.get("extra")
+        try:
+            return (int(elapsed), int(extra or 0))
+        except (TypeError, ValueError):
+            return (999, 0)
+
+    for event in sorted(events, key=event_order):
+        if normalize_name(event.get("type", "")) != "card":
             continue
 
-        detail = normalize_name(event.get("detail", ""))
-        if detail not in RED_CARD_DETAILS:
+        team_id = (event.get("team", {}) or {}).get("id")
+        player = event.get("player", {}) or {}
+        player_id = player.get("id")
+        player_name = player.get("name") or "Unknown player"
+        # Prefer the provider's player ID; use name/team when ID is absent.
+        player_key = (team_id, player_id if player_id is not None else normalize_name(player_name))
+        raw_detail = str(event.get("detail", "") or "").strip()
+        detail = normalize_name(raw_detail).replace("-", " ").replace("_", " ")
+        compact = " ".join(detail.split())
+        dismissal_type = classify_card_event(event)
+
+        is_yellow = compact in {"yellow card", "yellow", "yellow card (first)"}
+        is_second_yellow_label = dismissal_type == "Second yellow (dismissal)"
+
+        # Count regular yellow bookings too, so a provider that emits two
+        # generic 'Yellow Card' events can still be interpreted correctly.
+        inferred_second_yellow = False
+        if is_yellow:
+            yellow_counts[player_key] = yellow_counts.get(player_key, 0) + 1
+            inferred_second_yellow = yellow_counts[player_key] >= 2
+
+        if dismissal_type is None and inferred_second_yellow:
+            dismissal_type = "Second yellow (dismissal)"
+        elif dismissal_type is None:
             continue
 
-        if event.get("team", {}).get("id") != away_id:
+        if team_id != away_id:
             continue
 
-        minute = event.get("time", {}).get("elapsed")
-        extra = event.get("time", {}).get("extra")
+        minute = (event.get("time", {}) or {}).get("elapsed")
+        extra = (event.get("time", {}) or {}).get("extra")
         minute_text = str(minute) if minute is not None else "?"
         if extra:
             minute_text += f"+{extra}"
 
+        # Prevent duplicate records when a feed marks the same incident as
+        # both an explicit second-yellow dismissal and a generic yellow.
+        identity = (player_key, minute_text, dismissal_type)
+        if any(item.get("_identity") == identity for item in results):
+            continue
         results.append({
             "minute": minute_text,
-            "player": event.get("player", {}).get("name") or "Unknown player",
-            "detail": event.get("detail", "Red Card"),
+            "player": player_name,
+            "detail": dismissal_type,
+            "source_detail": raw_detail or "Card event",
+            "_identity": identity,
         })
 
+    for item in results:
+        item.pop("_identity", None)
     return results
 
 
@@ -493,6 +739,10 @@ def fixture_to_row(fixture):
 
     return {
         "Fixture ID": fixture_info.get("id"),
+        "League ID": league.get("id"),
+        "Season": league.get("season"),
+        "Home Team ID": home.get("id"),
+        "Away Team ID": away.get("id"),
         "League": league.get("name", "Unknown"),
         "League Country": league.get("country", ""),
         "Home Team": home.get("name", "Unknown"),
@@ -610,7 +860,7 @@ min_minute = st.sidebar.number_input(
     "Minimum match minute",
     min_value=0,
     max_value=130,
-    value=10,
+    value=55,
     step=1,
 )
 
@@ -618,7 +868,7 @@ max_total_goals = st.sidebar.number_input(
     "Maximum total goals",
     min_value=0,
     max_value=15,
-    value=5,
+    value=2,
     step=1,
 )
 
@@ -630,6 +880,18 @@ low_score_only = st.sidebar.checkbox(
 away_red_only = st.sidebar.checkbox(
     "Away red card only",
     value=False,
+)
+
+st.sidebar.subheader("📊 Odds and rankings")
+show_odds = st.sidebar.checkbox(
+    "Load starting/pre-match and live odds",
+    value=False,
+    help="Uses extra API requests for pre-match odds. True opening odds may not be available unless captured before kick-off.",
+)
+show_rankings = st.sidebar.checkbox(
+    "Load domestic table ranks and national-team FIFA ranks",
+    value=False,
+    help="Standings are cached for one hour; FIFA rankings are cached for one day. Some competitions or country names may not return rankings.",
 )
 
 refresh_seconds = st.sidebar.selectbox(
@@ -721,6 +983,54 @@ df = df.sort_values(
     ascending=[False, False, True],
 )
 
+# Optional odds/ranking enrichment. Disabled by default to preserve API quota.
+if show_rankings and not df.empty:
+    with st.spinner("Loading current competition standings and national-team rankings..."):
+        rank_maps = {}
+        # A standings request is made once per unique competition/season and cached for an hour.
+        unique_leagues = df[["League ID", "Season"]].dropna().drop_duplicates().head(20)
+        for _, league_row in unique_leagues.iterrows():
+            league_id = int(league_row["League ID"])
+            season = int(league_row["Season"])
+            rank_maps[(league_id, season)] = get_standings(API_KEY, league_id, season)
+
+        home_ranks, away_ranks = [], []
+        for _, row in df.iterrows():
+            key = (int(row["League ID"]), int(row["Season"])) if pd.notna(row["League ID"]) and pd.notna(row["Season"]) else None
+            ranks = rank_maps.get(key, {}) if key else {}
+            home_ranks.append(ranks.get(int(row["Home Team ID"]), "—") if pd.notna(row["Home Team ID"]) else "—")
+            away_ranks.append(ranks.get(int(row["Away Team ID"]), "—") if pd.notna(row["Away Team ID"]) else "—")
+        df["Home Table Rank"] = home_ranks
+        df["Away Table Rank"] = away_ranks
+
+        international_names = []
+        for group in list(INTERNATIONAL.values()) + list(WOMENS_INTERNATIONAL.values()):
+            international_names.extend(group)
+        international_name_set = names_for_selection(international_names)
+        df["Home FIFA Rank"] = "—"
+        df["Away FIFA Rank"] = "—"
+        for idx, row in df.iterrows():
+            if normalize_name(row["League"]) not in international_name_set:
+                continue
+            league_name = normalize_name(row["League"])
+            is_womens = ("women" in league_name) or ("women" in normalize_name(row["Home Team"])) or ("women" in normalize_name(row["Away Team"]))
+            gender = "women" if is_womens else "men"
+            df.at[idx, "Home FIFA Rank"] = get_fifa_ranking(row["Home Team"], gender)
+            df.at[idx, "Away FIFA Rank"] = get_fifa_ranking(row["Away Team"], gender)
+
+if show_odds and not df.empty:
+    with st.spinner("Loading available pre-match and live odds..."):
+        live_odds_map = get_all_live_odds(API_KEY)
+        # Keep pre-match calls bounded per refresh; results are cached for one hour.
+        odds_indices = list(df.index[:15])
+        df["Starting / Pre-match Odds"] = "Not loaded"
+        df["Live Odds"] = df["Fixture ID"].map(lambda fixture_id: live_odds_map.get(int(fixture_id), "Not supplied") if pd.notna(fixture_id) else "Not supplied")
+        for idx in odds_indices:
+            fixture_id = df.at[idx, "Fixture ID"]
+            df.at[idx, "Starting / Pre-match Odds"] = get_prematch_odds(API_KEY, int(fixture_id)) if pd.notna(fixture_id) else "Unavailable"
+        if len(df) > len(odds_indices):
+            st.caption("Pre-match odds are requested for the first 15 matches shown to limit API usage. Live odds use the provider's live feed.")
+
 # ------------------------------------------------------------
 # Metrics
 # ------------------------------------------------------------
@@ -737,8 +1047,8 @@ with col2:
 
 with col3:
     st.metric(
-        "Matches ≤ 5 goals",
-        int((df["Total Goals"] <= 5).sum()) if not df.empty else 0,
+        "Matches ≤ 2 goals",
+        int((df["Total Goals"] <= 2).sum()) if not df.empty else 0,
     )
 
 with col4:
@@ -755,21 +1065,16 @@ if df.empty:
         "No live matches currently satisfy the selected competition and match filters."
     )
 else:
-    display_df = df[
-        [
-            "League",
-            "League Country",
-            "Home Team",
-            "Away Team",
-            "Score",
-            "Minute",
-            "Total Goals",
-            "Away Red",
-            "Away Red Count",
-            "Away Red Details",
-            "Status",
-        ]
-    ].copy()
+    display_columns = [
+        "League", "League Country", "Home Team", "Away Team", "Score",
+        "Minute", "Total Goals", "Away Red", "Away Red Count",
+        "Away Red Details", "Status",
+    ]
+    if show_rankings:
+        display_columns.extend(["Home Table Rank", "Away Table Rank", "Home FIFA Rank", "Away FIFA Rank"])
+    if show_odds:
+        display_columns.extend(["Starting / Pre-match Odds", "Live Odds"])
+    display_df = df[[column for column in display_columns if column in df.columns]].copy()
 
     st.dataframe(
         display_df,
@@ -785,9 +1090,13 @@ else:
             "Away Red Count": st.column_config.NumberColumn("Away Reds", format="%d"),
         },
     )
+    if show_odds:
+        st.caption("Odds are provider-supplied snapshots and may be unavailable for some matches/bookmakers. The pre-match endpoint does not guarantee the first-ever opening price; exact opening odds require recording them before kick-off. Live odds can be suspended or missing.")
+    if show_rankings:
+        st.caption("Domestic table positions come from the selected competition's standings endpoint when supported. National-team FIFA ranks are retrieved separately from FIFA's ranking endpoint and may be unavailable for non-standard team names or unsupported responses.")
 
 st.divider()
-st.subheader("🚨 Away Red-Card Alerts")
+st.subheader("🚨 Away-Team Dismissal Alerts")
 
 red_df = df[df["Away Red"]].copy()
 
@@ -805,7 +1114,7 @@ if telegram_alerts_enabled and telegram_ready and not telegram_red_df.empty:
             continue
 
         message = (
-            "🟥 AWAY TEAM RED CARD\n\n"
+            "🟥 AWAY TEAM DISMISSAL\n\n"
             f"Competition: {row['League']} ({row['League Country']})\n"
             f"Match: {row['Home Team']} vs {row['Away Team']}\n"
             f"Score: {row['Score']}\n"
@@ -827,7 +1136,7 @@ if red_df.empty:
 else:
     for _, row in red_df.iterrows():
         st.warning(
-            f"**{row['Away Team']}** received a red card against "
+            f"**{row['Away Team']}** had a player sent off against "
             f"**{row['Home Team']}** — {row['Score']} ({row['Minute']}' min). "
             f"{row['Away Red Details']}"
         )
