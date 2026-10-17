@@ -1,6 +1,6 @@
-# Away Red Card Monitor — Men's and Women's Football + Telegram Alerts
+# Home & Away Red Card Monitor — Matches ≤ 5 Goals
 
-A Streamlit dashboard that monitors API-Football live fixtures and filters competitions by name. It includes selected men's and women's domestic leagues, second-division competitions for both, continental club competitions, and international tournaments. It also adds Japan and South Korea domestic leagues and Australian national/state competitions for men and women. Optional odds and ranking enrichment can display available pre-match odds, live odds, domestic league table positions, and FIFA men’s/women’s national-team ranks. Competition and data coverage depends on the provider, season, and API plan.
+A Streamlit dashboard that monitors API-Football live fixtures and filters competitions by name. By default, it shows matches from minute 5 onward with no more than five total goals, and detects dismissals for both home and away teams. It includes selected men's and women's domestic leagues, second-division competitions for both, continental club competitions, and international tournaments. It also adds Japan and South Korea domestic leagues and Australian national/state competitions for men and women. Optional odds and ranking enrichment can display available pre-match odds, live odds, domestic league table positions, and FIFA men’s/women’s national-team ranks. Competition and data coverage depends on the provider, season, and API plan.
 
 ## Files
 - `app.py` — dashboard
@@ -43,9 +43,9 @@ Save the secrets. Do not put tokens in `app.py` or commit them to GitHub.
 2. In the sidebar, find **Telegram alerts**.
 3. Confirm **Send away-red-card alerts to Telegram** is enabled.
 4. Click **Send test Telegram message**. A successful setup sends a test message to the configured chat.
-5. When a red card is detected for the away team in one of the selected competitions, the dashboard sends a Telegram alert containing the competition, teams, score, minute, and card details. The sidebar's minimum-minute and maximum-goal filters affect the table, but do not suppress Telegram notifications.
+5. When a direct red card or second-yellow dismissal is detected for either the home or away team in a selected competition, the dashboard sends a Telegram alert containing the dismissed side, player/card details, competition, teams, score, match minute, and total goals. By default, both the dashboard and Telegram alerts focus on matches at minute 5 or later with no more than five total goals. The maximum-goal control cannot be set above five.
 
-The app suppresses duplicate alerts for the same card during the current Streamlit session. If the app/session restarts, an alert already seen may be sent again; durable cross-restart deduplication requires a persistent database.
+The app suppresses duplicate alerts for each detected card during the current Streamlit session. If the app/session restarts, an alert already seen may be sent again; durable cross-restart deduplication requires a persistent database.
 
 
 ## 5. Optional odds and rankings
@@ -74,7 +74,7 @@ Some regional or women's competition names may not be returned by API-Football i
 
 - The dashboard polls the live fixtures feed when it reruns. Alerts are not a guaranteed 24/7 service, and Streamlit Community Cloud can sleep or restart apps.
 - For reliable always-on alerts, run the polling/notification worker separately on an always-on service or VPS, and use Streamlit for the dashboard.
-- Alerts are based on competitions and match filters currently selected in the sidebar.
+- Alerts are based on selected competitions and the current minimum-minute/maximum-goal filters. The red-card display selector affects the table view, not which side's dismissal events can trigger alerts.
 - API-Football coverage, event availability, and rate limits depend on the API plan.
 
 ## Run locally

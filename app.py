@@ -8,7 +8,7 @@ import streamlit as st
 import pycountry
 
 # ============================================================
-# Away Red Card Monitor — Deployment Ready
+# Home & Away Red Card Monitor — Matches ≤ 5 Goals
 # ============================================================
 # Streamlit Cloud -> App Settings -> Secrets:
 #   API_FOOTBALL_KEY = "YOUR_API_FOOTBALL_KEY"
@@ -21,7 +21,7 @@ import pycountry
 # ============================================================
 
 st.set_page_config(
-    page_title="Away Red Card Monitor",
+    page_title="Home & Away Red Card Monitor",
     page_icon="🟥",
     layout="wide",
 )
@@ -643,14 +643,14 @@ def classify_card_event(event):
     return None
 
 
-def get_away_red_cards(fixture):
-    """Return away-team dismissals, inferring a second yellow if needed.
+def get_team_red_cards(fixture, side):
+    """Return a team's dismissals, inferring a second yellow if needed.
 
     Prefer explicit provider dismissal labels. If the feed instead reports both
     bookings as ordinary yellow cards, infer a dismissal from the player's
     second yellow event in the same fixture.
     """
-    away_id = fixture.get("teams", {}).get("away", {}).get("id")
+    target_team_id = fixture.get("teams", {}).get(side, {}).get("id")
     results = []
     yellow_counts = {}
     events = list(fixture.get("events", []) or [])
@@ -694,7 +694,7 @@ def get_away_red_cards(fixture):
         elif dismissal_type is None:
             continue
 
-        if team_id != away_id:
+        if team_id != target_team_id:
             continue
 
         minute = (event.get("time", {}) or {}).get("elapsed")
@@ -721,6 +721,14 @@ def get_away_red_cards(fixture):
     return results
 
 
+def get_home_red_cards(fixture):
+    return get_team_red_cards(fixture, "home")
+
+
+def get_away_red_cards(fixture):
+    return get_team_red_cards(fixture, "away")
+
+
 def fixture_to_row(fixture):
     fixture_info = fixture.get("fixture", {})
     teams = fixture.get("teams", {})
@@ -735,7 +743,9 @@ def fixture_to_row(fixture):
     home_score = home_goals if isinstance(home_goals, int) else 0
     away_score = away_goals if isinstance(away_goals, int) else 0
 
-    reds = get_away_red_cards(fixture)
+    home_reds = get_home_red_cards(fixture)
+    away_reds = get_away_red_cards(fixture)
+    all_reds = home_reds + away_reds
 
     return {
         "Fixture ID": fixture_info.get("id"),
@@ -750,11 +760,23 @@ def fixture_to_row(fixture):
         "Score": f"{home_score} - {away_score}",
         "Minute": get_match_minute(fixture),
         "Total Goals": home_score + away_score,
-        "Away Red": bool(reds),
-        "Away Red Count": len(reds),
+        "Home Red": bool(home_reds),
+        "Home Red Count": len(home_reds),
+        "Home Red Details": "; ".join(
+            f"{r['minute']}' {r['player']} ({r['detail']})"
+            for r in home_reds
+        ),
+        "Away Red": bool(away_reds),
+        "Away Red Count": len(away_reds),
         "Away Red Details": "; ".join(
             f"{r['minute']}' {r['player']} ({r['detail']})"
-            for r in reds
+            for r in away_reds
+        ),
+        "Any Red": bool(all_reds),
+        "Total Red Cards": len(all_reds),
+        "All Red Details": "; ".join(
+            [f"Home: {r['minute']}' {r['player']} ({r['detail']})" for r in home_reds]
+            + [f"Away: {r['minute']}' {r['player']} ({r['detail']})" for r in away_reds]
         ),
         "Status": fixture_info.get("status", {}).get("long", ""),
     }
@@ -865,21 +887,18 @@ min_minute = st.sidebar.number_input(
 )
 
 max_total_goals = st.sidebar.number_input(
-    "Maximum total goals",
+    "Maximum total goals (matches ≤ 5 goals)",
     min_value=0,
-    max_value=15,
+    max_value=5,
     value=5,
     step=1,
+    help="The dashboard is restricted to matches with no more than five total goals.",
 )
 
-low_score_only = st.sidebar.checkbox(
-    "Low-score matches only",
-    value=False,
-)
-
-away_red_only = st.sidebar.checkbox(
-    "Away red card only",
-    value=False,
+red_card_filter = st.sidebar.selectbox(
+    "Red-card filter",
+    options=["Any match", "Any red card (home or away)", "Home team red card", "Away team red card"],
+    index=0,
 )
 
 st.sidebar.subheader("📊 Odds and rankings")
@@ -905,10 +924,10 @@ st.sidebar.divider()
 st.sidebar.subheader("📲 Telegram alerts")
 telegram_ready = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
 telegram_alerts_enabled = st.sidebar.checkbox(
-    "Send away-red-card alerts to Telegram",
+    "Send home/away red-card alerts to Telegram",
     value=telegram_ready,
     disabled=not telegram_ready,
-    help="Sends a message for an away-team red card in the selected competitions. Display-only minute and goal filters do not suppress Telegram alerts.",
+    help="Sends a message for each detected red card or second-yellow dismissal for either team, when the match meets the selected minute and total-goal filters.",
 )
 if not telegram_ready:
     st.sidebar.caption("Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Streamlit Secrets to enable alerts.")
@@ -916,7 +935,7 @@ elif st.sidebar.button("Send test Telegram message", use_container_width=True):
     ok, message = send_telegram_message(
         TELEGRAM_BOT_TOKEN,
         TELEGRAM_CHAT_ID,
-        "✅ Away Red Card Monitor: Telegram connection test successful. Alerts are configured.",
+        "✅ Home & Away Red Card Monitor: Telegram connection test successful. Alerts are configured.",
     )
     if ok:
         st.sidebar.success(message)
@@ -926,9 +945,9 @@ elif st.sidebar.button("Send test Telegram message", use_container_width=True):
 # ------------------------------------------------------------
 # Main page
 # ------------------------------------------------------------
-st.title("🟥 Away Red Card Monitor")
+st.title("🟥 Home & Away Red Card Monitor")
 st.caption(
-    "Live football dashboard using API-Football. "
+    "Live football dashboard for matches with no more than five total goals, monitoring dismissals for both teams. "
     "Includes men's and women's domestic leagues, selected second divisions, Japan and South Korea, "
     "Australian national/state competitions, continental clubs and international tournaments. "
     "Availability depends on API-Football coverage and season."
@@ -965,21 +984,24 @@ allowed_names = names_for_selection(specific_competitions)
 df["_league_normalized"] = df["League"].map(normalize_name)
 df = df[df["_league_normalized"].isin(allowed_names)]
 
-# Telegram notifications monitor selected competitions independently of the
-# visual minute/goal filters, so those display filters do not hide red cards.
+# Alerts and table both focus on matches meeting the selected minute and
+# goal thresholds. With defaults, this means minute 5 onward and 5 goals max.
 telegram_candidates_df = df.copy()
+telegram_candidates_df = telegram_candidates_df[telegram_candidates_df["Minute"] >= min_minute]
+telegram_candidates_df = telegram_candidates_df[telegram_candidates_df["Total Goals"] <= max_total_goals]
 
 df = df[df["Minute"] >= min_minute]
 df = df[df["Total Goals"] <= max_total_goals]
 
-if low_score_only:
-    df = df[df["Total Goals"] <= 2]
-
-if away_red_only:
+if red_card_filter == "Any red card (home or away)":
+    df = df[df["Any Red"]]
+elif red_card_filter == "Home team red card":
+    df = df[df["Home Red"]]
+elif red_card_filter == "Away team red card":
     df = df[df["Away Red"]]
 
 df = df.sort_values(
-    by=["Away Red", "Minute", "League"],
+    by=["Any Red", "Minute", "League"],
     ascending=[False, False, True],
 )
 
@@ -1041,8 +1063,8 @@ with col1:
 
 with col2:
     st.metric(
-        "Away red-card matches",
-        int(df["Away Red"].sum()) if not df.empty else 0,
+        "Matches with a red card",
+        int(df["Any Red"].sum()) if not df.empty else 0,
     )
 
 with col3:
@@ -1067,8 +1089,9 @@ if df.empty:
 else:
     display_columns = [
         "League", "League Country", "Home Team", "Away Team", "Score",
-        "Minute", "Total Goals", "Away Red", "Away Red Count",
-        "Away Red Details", "Status",
+        "Minute", "Total Goals", "Home Red", "Home Red Count",
+        "Home Red Details", "Away Red", "Away Red Count",
+        "Away Red Details", "Any Red", "Total Red Cards", "All Red Details", "Status",
     ]
     if show_rankings:
         display_columns.extend(["Home Table Rank", "Away Table Rank", "Home FIFA Rank", "Away FIFA Rank"])
@@ -1081,13 +1104,23 @@ else:
         use_container_width=True,
         hide_index=True,
         column_config={
+            "Home Red": st.column_config.CheckboxColumn(
+                "Home Red",
+                help="Whether the home team has received a red card or second-yellow dismissal.",
+            ),
             "Away Red": st.column_config.CheckboxColumn(
                 "Away Red",
-                help="Whether the away team has received a red card.",
+                help="Whether the away team has received a red card or second-yellow dismissal.",
+            ),
+            "Any Red": st.column_config.CheckboxColumn(
+                "Any Red",
+                help="Whether either team has received a red card or second-yellow dismissal.",
             ),
             "Minute": st.column_config.NumberColumn("Min", format="%d"),
             "Total Goals": st.column_config.NumberColumn("Goals", format="%d"),
+            "Home Red Count": st.column_config.NumberColumn("Home Reds", format="%d"),
             "Away Red Count": st.column_config.NumberColumn("Away Reds", format="%d"),
+            "Total Red Cards": st.column_config.NumberColumn("Total Reds", format="%d"),
         },
     )
     if show_odds:
@@ -1096,49 +1129,64 @@ else:
         st.caption("Domestic table positions come from the selected competition's standings endpoint when supported. National-team FIFA ranks are retrieved separately from FIFA's ranking endpoint and may be unavailable for non-standard team names or unsupported responses.")
 
 st.divider()
-st.subheader("🚨 Away-Team Dismissal Alerts")
+st.subheader("🚨 Home and Away Dismissal Alerts")
 
-red_df = df[df["Away Red"]].copy()
+red_df = df[df["Any Red"]].copy()
 
-# Notify once per distinct away-red-card event during this Streamlit session.
-# The key includes the fixture ID and card details, so a second red card in the
-# same match can trigger a separate message.
+# Notify once per distinct home/away dismissal during this Streamlit session.
+# The key includes the fixture ID and both teams' card details.
 if "telegram_sent_alert_keys" not in st.session_state:
     st.session_state["telegram_sent_alert_keys"] = set()
 
-telegram_red_df = telegram_candidates_df[telegram_candidates_df["Away Red"]].copy()
+telegram_red_df = telegram_candidates_df[telegram_candidates_df["Any Red"]].copy()
 if telegram_alerts_enabled and telegram_ready and not telegram_red_df.empty:
     for _, row in telegram_red_df.iterrows():
-        alert_key = f"{row['Fixture ID']}|{row['Away Red Details']}"
-        if alert_key in st.session_state["telegram_sent_alert_keys"]:
-            continue
+        dismissal_events = []
+        for side_label, details_column in (
+            ("HOME", "Home Red Details"),
+            ("AWAY", "Away Red Details"),
+        ):
+            details = str(row[details_column] or "").strip()
+            if details:
+                for event_detail in details.split("; "):
+                    dismissal_events.append((side_label, event_detail))
 
-        message = (
-            "🟥 AWAY TEAM DISMISSAL\n\n"
-            f"Competition: {row['League']} ({row['League Country']})\n"
-            f"Match: {row['Home Team']} vs {row['Away Team']}\n"
-            f"Score: {row['Score']}\n"
-            f"Minute: {row['Minute']}'\n"
-            f"Card details: {row['Away Red Details']}\n"
-            f"Total goals: {row['Total Goals']}\n\n"
-            "Sent by Away Red Card Monitor"
-        )
-        ok, send_error = send_telegram_message(
-            TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, message
-        )
-        if ok:
-            st.session_state["telegram_sent_alert_keys"].add(alert_key)
-        else:
-            st.warning(f"Telegram alert could not be sent: {send_error}")
+        for side_label, event_detail in dismissal_events:
+            alert_key = f"{row['Fixture ID']}|{side_label}|{event_detail}"
+            if alert_key in st.session_state["telegram_sent_alert_keys"]:
+                continue
+
+            message = (
+                "🟥 RED-CARD / DISMISSAL ALERT\n\n"
+                f"Team dismissed: {side_label}\n"
+                f"Card: {event_detail}\n"
+                f"Competition: {row['League']} ({row['League Country']})\n"
+                f"Match: {row['Home Team']} vs {row['Away Team']}\n"
+                f"Score: {row['Score']}\n"
+                f"Match minute: {row['Minute']}'\n"
+                f"Total goals: {row['Total Goals']}\n\n"
+                "Sent by Home & Away Red Card Monitor"
+            )
+            ok, send_error = send_telegram_message(
+                TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, message
+            )
+            if ok:
+                st.session_state["telegram_sent_alert_keys"].add(alert_key)
+            else:
+                st.warning(f"Telegram alert could not be sent: {send_error}")
 
 if red_df.empty:
-    st.success("No away-team red cards match the current filters.")
+    st.success("No home- or away-team red cards match the current filters.")
 else:
     for _, row in red_df.iterrows():
+        details = []
+        if row["Home Red Details"]:
+            details.append(f"Home: {row['Home Red Details']}")
+        if row["Away Red Details"]:
+            details.append(f"Away: {row['Away Red Details']}")
         st.warning(
-            f"**{row['Away Team']}** had a player sent off against "
-            f"**{row['Home Team']}** — {row['Score']} ({row['Minute']}' min). "
-            f"{row['Away Red Details']}"
+            f"**{row['Home Team']} vs {row['Away Team']}** — {row['Score']} "
+            f"({row['Minute']}' min). " + " | ".join(details)
         )
 
 # ------------------------------------------------------------
